@@ -1,0 +1,4 @@
+# Keep LF line endings in the repository, also when the project is checked out on Windows
+* text=auto eol=lf
+*.jpg binary
+*.png binary

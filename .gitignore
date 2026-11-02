@@ -1,4 +1,17 @@
+# Build output
 dist/
+
+# Python
 __pycache__/
+*.pyc
+.venv/
+
+# Source HDR files for tools/encode_sky.py (large)
 *.exr
+
+# Editors and OS files
+.vscode/
+.idea/
 .DS_Store
+Thumbs.db
+desktop.ini
