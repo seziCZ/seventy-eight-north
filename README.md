@@ -2,6 +2,8 @@
 
 Sail a 12 m yacht across a cold Arctic sea, in the browser. Built with [three.js](https://threejs.org), plain ES modules, no build step.
 
+**[Play it in your browser](https://sezicz.github.io/seventy-eight-north/)**
+
 ![A yacht sails toward a break in the clouds over a dark Arctic sea](docs/screenshot.jpg)
 
 - Photographed overcast sky with a sun disk, light shafts, distant snow showers and a procedural coastline
