@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SUN } from '../render/sky.js';
+import { SUN, HAZE_GLSL } from '../render/sky.js';
 import { WAVES_GLSL, waveAt, waveNormal } from './waves.js';
 import { smooth, seededRandom, fbm3 } from '../core/util.js';
 
@@ -97,12 +97,14 @@ const bergMaterial = createIceMaterial('ice-berg', false);
 
 /**
  * A sphere displaced by bergPoint(). Normals are computed by finite differences of the shape function,
- * so they stay smooth across the sphere's UV seam. Vertex colours: dark wet waterline, blue ice, snow on top,
- * darkened in hollows and lifted on ridges (curvature from four wider samples of the shape).
+ * so they stay smooth across the sphere's UV seam. Vertex colours: dark wet waterline, blue ice, snow on top.
+ * The iceData attribute holds the cavity occlusion (darker in hollows, lighter on ridges, from the curvature
+ * of four wider samples of the shape) and the snow weight, kept apart so the shader sees the base colour.
  */
 function createBerg(sx, sy, sz, seed, segments) {
   const geometry = new THREE.SphereGeometry(1, segments * 2, segments);
   const pos = geometry.attributes.position, nrm = geometry.attributes.normal, col = new Float32Array(pos.count * 3);
+  const data = new Float32Array(pos.count * 2);
   const d = new THREE.Vector3(), t1 = new THREE.Vector3(), t2 = new THREE.Vector3(), a = new THREE.Vector3(), b = new THREE.Vector3();
   const p0 = new THREE.Vector3(), n = new THREE.Vector3(), helper = new THREE.Vector3(), q = new THREE.Vector3(), avg = new THREE.Vector3();
   const deep = new THREE.Color(0x1f5f70), wet = new THREE.Color(0x4f7d8c), ice = new THREE.Color(0x8fb6c6), snow = new THREE.Color(0xd8e2e8), c = new THREE.Color();
@@ -128,13 +130,16 @@ function createBerg(sx, sy, sz, seed, segments) {
     const occlusion = Math.min(1.12, Math.max(0.45, 1 - cavity * 2.2));
 
     const y = p0.y;
+    let snowWeight = 0;
     if (y < 0.02) c.copy(deep);
     else if (y < 0.1) c.copy(wet).lerp(ice, smooth(0.02, 0.1, y));
-    else c.copy(ice).lerp(snow, Math.max(smooth(0.1, 0.38, y), smooth(0.55, 0.9, n.y)));
-    const crevice = (0.82 + 0.18 * fbm3(d.x * 9 + seed, d.y * 9, d.z * 9, 2)) * occlusion;
+    else { snowWeight = Math.max(smooth(0.1, 0.38, y), smooth(0.55, 0.9, n.y)); c.copy(ice).lerp(snow, snowWeight); }
+    const crevice = 0.82 + 0.18 * fbm3(d.x * 9 + seed, d.y * 9, d.z * 9, 2);
     col[j * 3] = c.r * crevice; col[j * 3 + 1] = c.g * crevice; col[j * 3 + 2] = c.b * crevice;
+    data[j * 2] = occlusion; data[j * 2 + 1] = snowWeight;
   }
   geometry.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geometry.setAttribute('iceData', new THREE.BufferAttribute(data, 2));
   const mesh = new THREE.Mesh(geometry, bergMaterial);
   mesh.scale.set(sx, sy, sz);
   if (sx < 20) { mesh.castShadow = true; mesh.receiveShadow = true; }
@@ -167,15 +172,18 @@ function createFloe(size, phase, material, ringMaterial) {
   const radius = (a) => 1 + 0.22 * Math.sin(a * 2 + phase[0]) + 0.14 * Math.sin(a * 3 + phase[1]) + 0.08 * Math.sin(a * 5 + phase[2]);
   const squash = 0.7 + 0.3 * Math.cos(phase[0]);
   const geometry = new THREE.CylinderGeometry(size, size * 1.06, 0.5, 14, 1);
-  const pos = geometry.attributes.position, col = new Float32Array(pos.count * 3);
+  const pos = geometry.attributes.position, col = new Float32Array(pos.count * 3), data = new Float32Array(pos.count * 2);
   const top = new THREE.Color(0xc9d4db), low = new THREE.Color(0x4f8396), c = new THREE.Color();
   for (let j = 0; j < pos.count; j++) {
     const px = pos.getX(j), pz = pos.getZ(j), k = radius(Math.atan2(pz, px));
     pos.setX(j, px * k); pos.setZ(j, pz * k * squash);
-    c.copy(low).lerp(top, smooth(-0.25, 0.22, pos.getY(j))).multiplyScalar(0.85 + 0.15 * Math.sin(px * 3.1 + pz * 2.3 + phase[2]));
+    const snowWeight = smooth(-0.25, 0.22, pos.getY(j));
+    c.copy(low).lerp(top, snowWeight).multiplyScalar(0.85 + 0.15 * Math.sin(px * 3.1 + pz * 2.3 + phase[2]));
     col[j * 3] = c.r; col[j * 3 + 1] = c.g; col[j * 3 + 2] = c.b;
+    data[j * 2] = 1; data[j * 2 + 1] = snowWeight;   // no cavity occlusion on a flat floe
   }
   geometry.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geometry.setAttribute('iceData', new THREE.BufferAttribute(data, 2));
   geometry.computeVertexNormals();
   const floe = new THREE.Mesh(geometry, material);
 
@@ -219,7 +227,7 @@ function createIsland() {
 /** Foam strip material. withSwell = true rides the waves in world space (bergs); floe rings bob with their floe. */
 function createFoamRingMaterial(shared, withSwell) {
   return new THREE.ShaderMaterial({
-    uniforms: { uTime: shared.uTime, tNoise: shared.tNoise },
+    uniforms: { uTime: shared.uTime, tNoise: shared.tNoise, tHorizon: shared.tHorizon },
     transparent: true, depthWrite: false, fog: false, side: THREE.DoubleSide,
     vertexShader: /* glsl */ `
       uniform float uTime;
@@ -234,15 +242,17 @@ function createFoamRingMaterial(shared, withSwell) {
         vAcross = across; vWorld = wp.xyz;
         gl_Position = projectionMatrix * viewMatrix * wp;
       }`,
-    fragmentShader: /* glsl */ `
-      uniform float uTime; uniform sampler2D tNoise;
+    fragmentShader: HAZE_GLSL + /* glsl */ `
+      uniform float uTime; uniform sampler2D tNoise; uniform sampler2D tHorizon;
       varying float vAcross; varying vec3 vWorld;
       void main(){
         float n = texture2D(tNoise, vWorld.xz * 0.35 + uTime * vec2(0.02, 0.015)).b * 0.6 + texture2D(tNoise, vWorld.xz * 1.1 - uTime * 0.03).b * 0.4;
         float edge = pow(1.0 - clamp(vAcross, 0.0, 1.0), 1.6);
         float a = smoothstep(0.35, 0.7, n * 0.7 + edge * 0.6) * edge;
         a *= 1.0 - smoothstep(300.0, 900.0, length(vWorld.xz - cameraPosition.xz));
-        gl_FragColor = vec4(vec3(0.34, 0.35, 0.36), a * 0.85);
+        vec3 toP = vWorld - cameraPosition;
+        float dist = length(toP);
+        gl_FragColor = vec4(mix(vec3(0.34, 0.35, 0.36), hazeColor(tHorizon, toP / dist), hazeAmount(dist, vWorld.y)), a * 0.85);
       }`
   });
 }
@@ -280,7 +290,8 @@ function createFoamRing(outline, width, material) {
  * Standard material with ice shading added per pixel: a crusty relief from 3D noise (fading with distance),
  * snow on upward ledges, glossy walls under rough snow, a dark wet band at the waterline, faint firn layers
  * on the walls, and a little cold light through thin ice when the sun is behind it.
- * The base colour and the baked cavity darkening come from the vertex colours.
+ * The base colour comes from the vertex colours; the geometry also needs an `iceData` attribute
+ * (x: cavity occlusion, y: snow weight).
  */
 function createIceMaterial(key, flatShading) {
   const material = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.6, flatShading });
@@ -288,12 +299,14 @@ function createIceMaterial(key, flatShading) {
   material.onBeforeCompile = shader => {
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
-        varying vec3 vIceWorld;`)
+        attribute vec2 iceData;
+        varying vec3 vIceWorld; varying vec2 vIceData;`)
       .replace('#include <project_vertex>', `#include <project_vertex>
-        vIceWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;`);
+        vIceWorld = (modelMatrix * vec4(transformed, 1.0)).xyz;
+        vIceData = iceData;`);
     shader.fragmentShader = shader.fragmentShader
       .replace('#include <common>', `#include <common>
-        varying vec3 vIceWorld;
+        varying vec3 vIceWorld; varying vec2 vIceData;
         const vec3 ICE_SUN = vec3(${SUN.x.toFixed(5)}, ${SUN.y.toFixed(5)}, ${SUN.z.toFixed(5)});
         float iceHash(vec3 p){ p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
         float iceNoise(vec3 x){
@@ -306,18 +319,20 @@ function createIceMaterial(key, flatShading) {
         {
           vec3 V = cameraPosition - vIceWorld;
           float dist = length(V); V /= dist;
-          // Crusty relief: perturb the world normal by the noise gradient, fading out with distance
+          // Crusty relief: perturb the world normal by the noise gradient, fading out by 700 m
           vec3 nW = inverseTransformDirection(normal, viewMatrix);
-          float e = 0.12, r0 = iceRelief(vIceWorld);
-          vec3 g = vec3(iceRelief(vIceWorld + vec3(e, 0.0, 0.0)), iceRelief(vIceWorld + vec3(0.0, e, 0.0)), iceRelief(vIceWorld + vec3(0.0, 0.0, e))) - r0;
-          g /= e;
-          nW = normalize(nW - (g - dot(g, nW) * nW) * 0.55 * (1.0 - smoothstep(120.0, 700.0, dist)));
-          normal = normalize((viewMatrix * vec4(nW, 0.0)).xyz);
+          if (dist < 700.0) {
+            float e = 0.12, r0 = iceRelief(vIceWorld);
+            vec3 g = vec3(iceRelief(vIceWorld + vec3(e, 0.0, 0.0)), iceRelief(vIceWorld + vec3(0.0, e, 0.0)), iceRelief(vIceWorld + vec3(0.0, 0.0, e))) - r0;
+            g /= e;
+            nW = normalize(nW - (g - dot(g, nW) * nW) * 0.55 * (1.0 - smoothstep(120.0, 700.0, dist)));
+            normal = normalize((viewMatrix * vec4(nW, 0.0)).xyz);
+          }
 
-          // Snow: high on the berg (vertex colour) or on any upward ledge (per pixel, broken up by noise)
-          float snowV = smoothstep(0.55, 0.8, dot(vColor.rgb, vec3(0.2126, 0.7152, 0.0722)));
+          // Snow: high on the berg (baked weight) or on any upward ledge (per pixel, broken up by noise)
           float snowP = smoothstep(0.62, 0.86, nW.y + (iceNoise(vIceWorld * 0.7) - 0.5) * 0.35);
-          float snow = max(snowV, snowP);
+          float snow = max(vIceData.y, snowP);
+          diffuseColor.rgb *= vIceData.x;   // baked cavity occlusion
           diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.80, 0.84, 0.87), snowP * 0.85);
 
           // Firn layers on the walls, a dark wet band at the waterline

@@ -7,7 +7,7 @@ Builds a single self-contained HTML file: dist/seventy-eight-north.html
   * three.js is loaded from its classic UMD build instead of the ES module build (same version).
   * assets/ files are inlined as data URIs.
 
-The result opens straight from disk (no server needed) and works on hosts that block external files.
+The result opens straight from disk (no server needed). It still loads three.js and the font from CDNs.
 
 Conventions the bundler relies on (keep them when editing src/):
   * one import per line:   import { a, b } from './file.js';   or   import * as THREE from 'three';
@@ -37,14 +37,14 @@ def collect(path, order, seen):
     if path in seen:
         return
     seen.add(path)
-    for _, spec in IMPORT_RE.findall(path.read_text()):
+    for _, spec in IMPORT_RE.findall(path.read_text(encoding='utf-8')):
         if spec.startswith('.'):
             collect((path.parent / spec).resolve(), order, seen)
     order.append(path)
 
 
 def transform(path):
-    code = path.read_text()
+    code = path.read_text(encoding='utf-8')
 
     def replace_import(m):
         what, spec = m.group(1), m.group(2)
@@ -74,7 +74,7 @@ def main():
             sys.exit(f'asset path {rel} not found in the sources')
         bundle = bundle.replace(f"'{rel}'", f"'data:{mime};base64,{data}'")
 
-    html = (ROOT / 'index.html').read_text()
+    html = (ROOT / 'index.html').read_text(encoding='utf-8')
     scripts = re.compile(r'<script type="importmap">.*?</script>\s*<script type="module" src="src/main.js"></script>', re.S)
     if not scripts.search(html):
         sys.exit('index.html: import map / module script block not found')
@@ -82,7 +82,7 @@ def main():
 
     out = ROOT / 'dist' / 'seventy-eight-north.html'
     out.parent.mkdir(exist_ok=True)
-    out.write_text(html)
+    out.write_text(html, encoding='utf-8', newline='\n')
     print(f'wrote {out.relative_to(ROOT)} ({out.stat().st_size / 1e6:.1f} MB, {len(order)} modules)')
 
 

@@ -16,14 +16,14 @@ const NOISE_GLSL = /* glsl */ `
  *
  * skyBase()       the photographed sky (an equirectangular upper hemisphere). The JPEG stores
  *                 enc = (x / (1 + x))^(1/2.2), which this decodes back to HDR brightness, then grades
- *                 (more contrast, less colour, a gentle horizon gradient, faint stratus streaks).
+ *                 (more contrast, less colour, a gentle horizon gradient, faint stratus streaks), and
+ *                 rolls off the highlights so the sun gap keeps its cloud edges.
  * horizonDetail() distant coastal ranges and a thin luminous horizon line.
  * showers()       distant snow showers hanging from the cloud base, in front of the coast.
  * skyColor()      all of the above.
- * skyHorizon()    the sky just above the horizon, without detail (for fading the far sea).
  * sunDisk()       the crisp sun and its tight halo.
  *
- * The expensive procedural parts never change, so they are baked once into two small textures
+ * The expensive procedural parts never change, so they are baked into two small textures
  * (see createSkyBaker): tStreaks (stratus streaks by azimuth and elevation) and tHorizon
  * (per azimuth: coastline heights, slope lighting, and the sky colour at the horizon).
  *
@@ -31,6 +31,8 @@ const NOISE_GLSL = /* glsl */ `
  */
 export const SKY_GLSL = NOISE_GLSL + /* glsl */ `
   uniform vec3 uSun; uniform float uTime; uniform sampler2D tSky; uniform sampler2D tStreaks; uniform sampler2D tHorizon;
+  // Coastline heights (radians) are stored divided by this, so they keep their precision in 8-bit targets
+  const float HORIZON_HEIGHT_SCALE = 0.04;
 
   vec3 skyBase(vec3 d){
     float th = atan(d.z, d.x);
@@ -49,7 +51,8 @@ export const SKY_GLSL = NOISE_GLSL + /* glsl */ `
     // Faint horizontal stratus streaks (baked), so the low band reads as distant layered cloud
     float st = texture2D(tStreaks, vec2(u, clamp(d.y / 0.1, 0.0, 1.0))).r;
     x *= 1.0 + (1.0 - smoothstep(0.0, 0.1, d.y)) * (st - 0.5) * 0.35;
-    // Soft knee above 1.0, so the sun gap keeps its silver cloud edges instead of burning out
+    // Exposure of the photo in scene units, then a soft knee above 1.0, so the sun gap keeps its
+    // silver cloud edges instead of burning out
     x *= 0.24;
     float lx = dot(x, vec3(0.2126, 0.7152, 0.0722));
     float lk = lx < 1.0 ? lx : 1.0 + (lx - 1.0) / (1.0 + (lx - 1.0) / 2.0);
@@ -69,7 +72,7 @@ export const SKY_GLSL = NOISE_GLSL + /* glsl */ `
     if (d.y > 0.06) return col;
     float th = atan(d.z, d.x);
     float u = th * 0.15915494 + 0.5;
-    vec4 heights = texture2D(tHorizon, vec2(u, 0.5 / 3.0));
+    vec4 heights = texture2D(tHorizon, vec2(u, 0.5 / 3.0)) * HORIZON_HEIGHT_SCALE;
     vec4 lit = texture2D(tHorizon, vec2(u, 1.5 / 3.0));
     vec3 hz = texture2D(tHorizon, vec2(u, 2.5 / 3.0)).rgb;
     float sDot = dot(normalize(d.xz + vec2(1e-4, 0.0)), normalize(uSun.xz));
@@ -84,13 +87,13 @@ export const SKY_GLSL = NOISE_GLSL + /* glsl */ `
   // carry slowly falling streaks. They veil the coast; the one toward the sun is backlit and glows.
   vec3 showers(vec3 d, vec3 col){
     if (d.y > 0.16) return col;
-    float th = atan(d.z, d.x), sAz = atan(uSun.z, uSun.x), y = max(d.y, 0.0);
+    float th = atan(d.z, d.x), sunAz = atan(uSun.z, uSun.x), y = max(d.y, 0.0);
     float total = 0.0;
     for (int k = 0; k < 4; k++) {
       // azimuth offset from the sun, half width, base height (radians)
       vec3 s = k == 0 ? vec3(-0.62, 0.10, 0.10) : k == 1 ? vec3(0.95, 0.22, 0.12)
              : k == 2 ? vec3(-1.9, 0.35, 0.09) : vec3(3.3, 0.28, 0.13);
-      float lean = th - (sAz + s.x) + y * 1.2;
+      float lean = th - (sunAz + s.x) + y * 1.2;
       float a = abs(atan(sin(lean), cos(lean)));
       float edge = s.y * (0.75 + 0.5 * noise(vec2(y * 40.0, s.x * 10.0)));
       float across = 1.0 - smoothstep(edge * 0.5, edge, a);
@@ -101,13 +104,12 @@ export const SKY_GLSL = NOISE_GLSL + /* glsl */ `
     // The veil is lighter than the dark cloud behind it, and glows when backlit by the sun
     float sDot = dot(normalize(d.xz + vec2(1e-4, 0.0)), normalize(uSun.xz));
     vec3 hz = texture2D(tHorizon, vec2(th * 0.15915494 + 0.5, 2.5 / 3.0)).rgb;
-    vec3 hzSun = texture2D(tHorizon, vec2(sAz * 0.15915494 + 0.5, 2.5 / 3.0)).rgb;   // keeps veils visible on the dark side
+    vec3 hzSun = texture2D(tHorizon, vec2(sunAz * 0.15915494 + 0.5, 2.5 / 3.0)).rgb;   // keeps veils visible on the dark side
     vec3 veil = hz * mix(1.6, 3.0, pow(max(sDot, 0.0), 3.0)) + hzSun * 0.08;
     return mix(col, veil, total * 0.8);
   }
 
   vec3 skyColor(vec3 d){ return showers(d, horizonDetail(d, skyBase(d))); }
-  vec3 skyHorizon(vec3 d){ return skyBase(normalize(vec3(d.x, 0.004, d.z))); }
 
   vec3 sunDisk(vec3 d){
     float c = dot(d, uSun);
@@ -122,19 +124,20 @@ export const SKY_GLSL = NOISE_GLSL + /* glsl */ `
  * at the horizon in the view direction (the baked row of tHorizon), lifted a little so the horizon reads
  * as a pale line. It thins with height, so berg tops stay a little clearer than their waterlines.
  */
-export const HAZE_DENSITY = 0.0024;   // per metre at sea level
+const HAZE_DENSITY = 0.0024;   // per metre at sea level
 export const HAZE_GLSL = /* glsl */ `
   vec3 hazeColor(sampler2D horizon, vec3 dir){
     return texture2D(horizon, vec2(atan(dir.z, dir.x) * 0.15915494 + 0.5, 2.5 / 3.0)).rgb * 1.3 + vec3(0.003, 0.004, 0.005);
   }
+  // Density falls to 45 % of its sea-level value with height, with a 30 m scale height
   float hazeAmount(float dist, float height){
     return 1.0 - exp(-dist * ${HAZE_DENSITY.toFixed(5)} * mix(0.45, 1.0, exp(-max(height, 0.0) / 30.0)));
   }
 `;
 
 /**
- * Replaces the standard fog with the haze on every built-in material under `root`. Call before the first
- * render. scene.fog must still be set: it switches the fog shader chunks on, but its colour and range are unused.
+ * Adds the haze to every built-in material under `root` that has `fog` enabled (the default). Call before
+ * the first render. The haze code sits after the fog chunks, so it runs without scene.fog.
  */
 export function addHaze(root, tHorizon) {
   const patch = shader => {
@@ -159,6 +162,8 @@ export function addHaze(root, tHorizon) {
       m.userData.hazed = true;   // materials are shared between meshes: patch each one once
       const own = m.onBeforeCompile;   // keep a material's own patch (the ice has one)
       m.onBeforeCompile = (shader, renderer) => { own.call(m, shader, renderer); patch(shader); };
+      const key = m.customProgramCacheKey.bind(m);   // a hazed program must not be shared with an unhazed one
+      m.customProgramCacheKey = () => key() + '|haze';
     });
   });
 }
@@ -174,13 +179,13 @@ function createSkyMaterial(shared, below) {
     vertexShader: /* glsl */ `
       varying vec3 vDir;
       void main(){ vDir = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
-    fragmentShader: SKY_GLSL + /* glsl */ `
+    fragmentShader: SKY_GLSL + HAZE_GLSL + /* glsl */ `
       uniform float uBelow; varying vec3 vDir;
       void main(){
         vec3 d = normalize(vDir);
         vec3 col;
         if (d.y < 0.0) {
-          vec3 hz = skyHorizon(d);
+          vec3 hz = hazeColor(tHorizon, d);   // the same colour as the far edge of the sea, so there is no seam
           col = mix(hz, hz * 0.22 + vec3(0.003, 0.007, 0.011), uBelow * smoothstep(0.0, 0.12, -d.y));
         } else {
           col = skyColor(d) + sunDisk(d);
@@ -272,7 +277,7 @@ export function createSkyBaker(renderer, shared, type) {
           if (k == 0) { heights.x = h; lit.x = l; } else if (k == 1) { heights.y = h; lit.y = l; } else { heights.z = h; lit.z = l; }
         }
         vec3 hz = skyBase(normalize(vec3(cos(th), 0.002, sin(th))));
-        gl_FragColor = row < 0.5 ? heights : row < 1.5 ? lit : vec4(hz, 1.0);
+        gl_FragColor = row < 0.5 ? heights / HORIZON_HEIGHT_SCALE : row < 1.5 ? lit : vec4(hz, 1.0);
       }`
   });
 

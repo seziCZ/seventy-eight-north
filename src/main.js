@@ -88,7 +88,6 @@ function start() {
   sunLight.shadow.normalBias = 0.03;
   scene.add(sunLight, sunLight.target);
   scene.add(new THREE.HemisphereLight(new THREE.Color().setRGB(0.7, 0.75, 0.82), new THREE.Color().setRGB(0.1, 0.12, 0.14), 0.45));
-  scene.fog = new THREE.Fog(0x000000, 1, 2);   // only switches the fog chunks on; addHaze() replaces colour and range
 
   const ice = createIce(scene, shared, sea.uniforms);
   const yacht = createYacht({ sunView, pxUniform, sunUniform: shared.uSun });

@@ -158,8 +158,9 @@ export function createRenderPipeline({ renderer, scene, camera, particleScene, e
       float valid = (pc.w > 0.0 && puv.x >= 0.0 && puv.x <= 1.0 && puv.y >= 0.0 && puv.y <= 1.0) ? 1.0 : 0.0;
       vec3 h = clamp(toYC(enc(texture2D(tHist, puv).rgb)), m1 - sig, m1 + sig);
       cur += (cur - m1) * 0.35;
-      vec3 o = toRGB(mix(cur, h, uBlend * valid));
-      gl_FragColor = vec4(dec(max(o, vec3(0.0))), 1.0);
+      vec3 o = max(toRGB(mix(cur, h, uBlend * valid)), vec3(0.0));
+      o *= min(1.0, 0.99 / max(lum(o), 1e-4));   // the sharpen can push bright pixels past the encoding's limit
+      gl_FragColor = vec4(dec(o), 1.0);
     }`, { tCur: { value: null }, tHist: { value: null }, uTexel: vec2(), uBlend: { value: 0 },
           uInvVP: { value: new THREE.Matrix4() }, uPrevVP: { value: new THREE.Matrix4() }, uCamPos: { value: new THREE.Vector3() } });
 

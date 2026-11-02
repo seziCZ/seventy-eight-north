@@ -5,7 +5,7 @@ Generates assets/ocean-noise.png, a 512x512 tileable texture:
         (S = 99.7th percentile, so values stay in range). The water shader decodes them as normals.
   B     soft tileable noise with a 1/k^1.6 spectrum, used for mist, foam breakup, wind patches and cloud shadows.
 
-Both channels tile seamlessly because they are built in the frequency domain (inverse FFT is periodic).
+All channels tile seamlessly because they are built in the frequency domain (inverse FFT is periodic).
 
     pip install -r tools/requirements.txt
     python3 tools/make_ocean_noise.py

@@ -10,7 +10,7 @@ export const clamp = (x, a, b) => Math.min(b, Math.max(a, x));
 
 export const deg = (radians) => radians * 180 / Math.PI;
 
-/** Deterministic Park–Miller generator, so the ice field is identical on every load. */
+/** Deterministic Park-Miller generator, so the ice field is identical on every load. */
 export function seededRandom(seed) {
   return () => {
     seed = (seed * 16807) % 2147483647;
