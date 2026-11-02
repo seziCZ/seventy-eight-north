@@ -18,7 +18,8 @@ const NOISE_GLSL = /* glsl */ `
  *                 enc = (x / (1 + x))^(1/2.2), which this decodes back to HDR brightness, then grades
  *                 (more contrast, less colour, a gentle horizon gradient, faint stratus streaks).
  * horizonDetail() distant coastal ranges and a thin luminous horizon line.
- * skyColor()      both of the above.
+ * showers()       distant snow showers hanging from the cloud base, in front of the coast.
+ * skyColor()      all of the above.
  * skyHorizon()    the sky just above the horizon, without detail (for fading the far sea).
  * sunDisk()       the crisp sun and its tight halo.
  *
@@ -48,7 +49,11 @@ export const SKY_GLSL = NOISE_GLSL + /* glsl */ `
     // Faint horizontal stratus streaks (baked), so the low band reads as distant layered cloud
     float st = texture2D(tStreaks, vec2(u, clamp(d.y / 0.1, 0.0, 1.0))).r;
     x *= 1.0 + (1.0 - smoothstep(0.0, 0.1, d.y)) * (st - 0.5) * 0.35;
-    return x * 0.24;
+    // Soft knee above 1.0, so the sun gap keeps its silver cloud edges instead of burning out
+    x *= 0.24;
+    float lx = dot(x, vec3(0.2126, 0.7152, 0.0722));
+    float lk = lx < 1.0 ? lx : 1.0 + (lx - 1.0) / (1.0 + (lx - 1.0) / 2.0);
+    return x * (lk / max(lx, 1e-4));
   }
 
   // One coastline layer: rock and snow mixed into the haze, anti-aliased against the sky above
@@ -75,7 +80,33 @@ export const SKY_GLSL = NOISE_GLSL + /* glsl */ `
     return col;
   }
 
-  vec3 skyColor(vec3 d){ return horizonDetail(d, skyBase(d)); }
+  // Distant snow showers: grey curtains that hang from the cloud base to the horizon, lean downwind and
+  // carry slowly falling streaks. They veil the coast; the one toward the sun is backlit and glows.
+  vec3 showers(vec3 d, vec3 col){
+    if (d.y > 0.16) return col;
+    float th = atan(d.z, d.x), sAz = atan(uSun.z, uSun.x), y = max(d.y, 0.0);
+    float total = 0.0;
+    for (int k = 0; k < 4; k++) {
+      // azimuth offset from the sun, half width, base height (radians)
+      vec3 s = k == 0 ? vec3(-0.62, 0.10, 0.10) : k == 1 ? vec3(0.95, 0.22, 0.12)
+             : k == 2 ? vec3(-1.9, 0.35, 0.09) : vec3(3.3, 0.28, 0.13);
+      float lean = th - (sAz + s.x) + y * 1.2;
+      float a = abs(atan(sin(lean), cos(lean)));
+      float edge = s.y * (0.75 + 0.5 * noise(vec2(y * 40.0, s.x * 10.0)));
+      float across = 1.0 - smoothstep(edge * 0.5, edge, a);
+      float top = 1.0 - smoothstep(s.z * 0.55, s.z, y + (noise(vec2(th * 60.0, s.x)) - 0.5) * 0.035);
+      float streak = 0.55 + 0.45 * noise(vec2(lean * 110.0, y * 14.0 + uTime * 0.4));
+      total = max(total, across * top * streak);
+    }
+    // The veil is lighter than the dark cloud behind it, and glows when backlit by the sun
+    float sDot = dot(normalize(d.xz + vec2(1e-4, 0.0)), normalize(uSun.xz));
+    vec3 hz = texture2D(tHorizon, vec2(th * 0.15915494 + 0.5, 2.5 / 3.0)).rgb;
+    vec3 hzSun = texture2D(tHorizon, vec2(sAz * 0.15915494 + 0.5, 2.5 / 3.0)).rgb;   // keeps veils visible on the dark side
+    vec3 veil = hz * mix(1.6, 3.0, pow(max(sDot, 0.0), 3.0)) + hzSun * 0.08;
+    return mix(col, veil, total * 0.8);
+  }
+
+  vec3 skyColor(vec3 d){ return showers(d, horizonDetail(d, skyBase(d))); }
   vec3 skyHorizon(vec3 d){ return skyBase(normalize(vec3(d.x, 0.004, d.z))); }
 
   vec3 sunDisk(vec3 d){

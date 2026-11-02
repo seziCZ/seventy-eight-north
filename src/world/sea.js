@@ -100,7 +100,7 @@ export function createSea(shared) {
         vec3 tb = cross(r, ta);
         vec3 rs = (skyBase(r) * 2.0 + skyBase(normalize(r + ta * 0.07)) + skyBase(normalize(r - ta * 0.07))
                  + skyBase(normalize(r + tb * 0.07)) + skyBase(normalize(r - tb * 0.07))) / 6.0;
-        rs = horizonDetail(r, rs);
+        rs = showers(r, horizonDetail(r, rs));
         rs *= 1.0 / (1.0 + 0.45 * max(dot(rs, vec3(0.2126, 0.7152, 0.0722)) - 0.5, 0.0));
         rs += sunDisk(r);
         vec4 rp = uTexMat * vec4(vWorld.x, 0.0, vWorld.z, 1.0);

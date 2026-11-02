@@ -114,7 +114,7 @@ export function createRenderPipeline({ renderer, scene, camera, particleScene, e
       vec3 c = (texture2D(tInput, vUv + uTexel * vec2(-1.0, -1.0)).rgb + texture2D(tInput, vUv + uTexel * vec2(1.0, -1.0)).rgb
               + texture2D(tInput, vUv + uTexel * vec2(-1.0, 1.0)).rgb + texture2D(tInput, vUv + uTexel * vec2(1.0, 1.0)).rgb) * 0.25;
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-      float m = max(l - 0.7, 0.0) * smoothstep(uHorizon, uHorizon + 0.03, vUv.y);
+      float m = max(l - 0.9, 0.0) * 3.0 * smoothstep(uHorizon, uHorizon + 0.03, vUv.y);   // matched to the sky roll-off
       gl_FragColor = vec4(c / max(l, 1e-4) * min(m, 8.0), 1.0);
     }`, { tInput: { value: null }, uTexel: vec2(), uHorizon: { value: 0.5 } });
   const raysBlurMat = fullscreen(/* glsl */ `

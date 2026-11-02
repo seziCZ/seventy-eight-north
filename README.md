@@ -64,7 +64,7 @@ tools/                  standalone build and asset generators
 
 ## How it works
 
-- **Sky.** An HDR photo stored as a JPEG with an invertible curve, `(x/(1+x))^(1/2.2)`, so 8 bits carry HDR. The shader decodes and grades it, and adds the coastline and sun disk. The procedural parts (coastline, stratus streaks) never change, so they are baked into small textures at startup. The sky is also baked into an environment map that lights the yacht and ice.
+- **Sky.** An HDR photo stored as a JPEG with an invertible curve, `(x/(1+x))^(1/2.2)`, so 8 bits carry HDR. The shader decodes and grades it, softens its brightest highlights so the sun gap keeps its cloud edges, and adds the coastline, distant snow showers and the sun disk. The procedural parts (coastline, stratus streaks) never change, so they are baked into small textures at startup. The sky is also baked into an environment map that lights the yacht and ice.
 - **Sea.** The swell displaces the mesh on the GPU, and `waveAt()` evaluates the same waves on the CPU so floating objects ride the drawn surface. Surface detail comes from a tileable FFT slope texture at three scales. Reflections blend the analytic sky with a mirror render of the yacht and ice by Fresnel.
 - **Haze.** The ice, the island and the yacht fade into the same haze as the sea. Its colour is the sky at the horizon in each direction, and it thins with height. See `addHaze()` in `src/render/sky.js`.
 - **Sailing.** Apparent wind sets the angle of attack on the sails, limited by the sheet. Lift and drag give drive and heel. The hull has drag and inertia, and steering needs water flow over the rudder.
