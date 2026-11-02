@@ -105,8 +105,8 @@ export const SKY_GLSL = NOISE_GLSL + /* glsl */ `
     float sDot = dot(normalize(d.xz + vec2(1e-4, 0.0)), normalize(uSun.xz));
     vec3 hz = texture2D(tHorizon, vec2(th * 0.15915494 + 0.5, 2.5 / 3.0)).rgb;
     vec3 hzSun = texture2D(tHorizon, vec2(sunAz * 0.15915494 + 0.5, 2.5 / 3.0)).rgb;   // keeps veils visible on the dark side
-    vec3 veil = hz * mix(1.6, 3.0, pow(max(sDot, 0.0), 3.0)) + hzSun * 0.08;
-    return mix(col, veil, total * 0.8);
+    vec3 veil = hz * mix(1.4, 2.4, pow(max(sDot, 0.0), 3.0)) + hzSun * 0.05;
+    return mix(col, veil, total * 0.45);   // a hint of weather, not a feature
   }
 
   vec3 skyColor(vec3 d){ return showers(d, horizonDetail(d, skyBase(d))); }

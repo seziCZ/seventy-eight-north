@@ -114,7 +114,9 @@ export function createRenderPipeline({ renderer, scene, camera, particleScene, e
       vec3 c = (texture2D(tInput, vUv + uTexel * vec2(-1.0, -1.0)).rgb + texture2D(tInput, vUv + uTexel * vec2(1.0, -1.0)).rgb
               + texture2D(tInput, vUv + uTexel * vec2(-1.0, 1.0)).rgb + texture2D(tInput, vUv + uTexel * vec2(1.0, 1.0)).rgb) * 0.25;
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-      float m = max(l - 0.9, 0.0) * 3.0 * smoothstep(uHorizon, uHorizon + 0.03, vUv.y);   // matched to the sky roll-off
+      // Only the sky well above the horizon feeds the shafts: the bright band right above it (horizon line,
+      // haze, stratus streaks) would otherwise smear into a row of short streaks along the horizon
+      float m = max(l - 0.9, 0.0) * 3.0 * smoothstep(uHorizon + 0.02, uHorizon + 0.12, vUv.y);   // matched to the sky roll-off
       gl_FragColor = vec4(c / max(l, 1e-4) * min(m, 8.0), 1.0);
     }`, { tInput: { value: null }, uTexel: vec2(), uHorizon: { value: 0.5 } });
   const raysBlurMat = fullscreen(/* glsl */ `
@@ -167,7 +169,7 @@ export function createRenderPipeline({ renderer, scene, camera, particleScene, e
   // Composite and grade: nearly colourless, steel-blue shadows, neutral highlights, firm S-curve, soft vignette
   const compositeMat = fullscreen(/* glsl */ `
     uniform sampler2D tScene; uniform sampler2D tBloom; uniform sampler2D tRays; uniform sampler2D tParticles;
-    uniform float uRays; uniform float uAspect; uniform float uTime;
+    uniform float uRays; uniform float uRaysHorizon; uniform float uAspect; uniform float uTime;
     varying vec2 vUv;
     vec3 aces(vec3 color){
       const mat3 inM = mat3(vec3(0.59719, 0.07600, 0.02840), vec3(0.35458, 0.90834, 0.13383), vec3(0.04823, 0.01566, 0.83777));
@@ -178,7 +180,8 @@ export function createRenderPipeline({ renderer, scene, camera, particleScene, e
     }
     vec3 toSRGB(vec3 c){ return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(vec3(0.0031308), c)); }
     void main(){
-      vec3 c = texture2D(tScene, vUv).rgb + texture2D(tBloom, vUv).rgb * 0.08 + texture2D(tRays, vUv).rgb * uRays;
+      vec3 c = texture2D(tScene, vUv).rgb + texture2D(tBloom, vUv).rgb * 0.08 + texture2D(tRays, vUv).rgb * uRays
+              * mix(0.25, 1.0, smoothstep(uRaysHorizon - 0.04, uRaysHorizon + 0.04, vUv.y));   // fade below the horizon
       vec4 pt = texture2D(tParticles, vUv);
       c = c * (1.0 - pt.a) + pt.rgb;
       c = aces(c);
@@ -193,7 +196,7 @@ export function createRenderPipeline({ renderer, scene, camera, particleScene, e
       c += (fract(sin(dot(gl_FragCoord.xy + fract(uTime) * 61.0, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
       gl_FragColor = vec4(c, 1.0);
     }`, { tScene: { value: null }, tBloom: { value: null }, tRays: { value: null }, tParticles: { value: null },
-          uRays: { value: 0 }, uAspect: { value: 1 }, uTime: { value: 0 } });
+          uRays: { value: 0 }, uRaysHorizon: raysMaskMat.uniforms.uHorizon, uAspect: { value: 1 }, uTime: { value: 0 } });
 
   // ---------------------------------------------------------------------------
   // Sizes
