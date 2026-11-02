@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Seventy-eight north</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #f5f8f9;
+    --ink-soft: rgba(245, 248, 249, 0.72);
+    --glass: rgba(9, 20, 28, 0.38);
+    --edge: rgba(255, 255, 255, 0.18);
+    --accent: #8fd3ff;
+    --warn: #ffd59a;
+    --bg: #0a1820;
+    color-scheme: dark;
+    box-sizing: border-box;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) { --bg: #0a1820; color-scheme: dark; }
+  }
+  :root[data-theme="dark"] { --bg: #0a1820; color-scheme: dark; }
+  html { scroll-padding-top: env(safe-area-inset-top, 0px); height: 100%; }
+  *, *::before, *::after { box-sizing: inherit; }
+  body {
+    margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink);
+    font-family: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased; user-select: none; -webkit-user-select: none;
+  }
+  canvas#scene { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; touch-action: none; outline: none; }
+
+  .hud {
+    position: fixed; display: flex; gap: 14px; align-items: center; pointer-events: none;
+    top: calc(env(safe-area-inset-top, 0px) + 16px); left: calc(env(safe-area-inset-left, 0px) + 16px);
+    text-shadow: 0 1px 12px rgba(0, 10, 20, 0.6);
+  }
+  .dial { width: 84px; height: 84px; }
+  .readout { font-variant-numeric: tabular-nums; }
+  .spd { font-size: 30px; font-weight: 600; line-height: 1; }
+  .spd small { font-size: 14px; font-weight: 500; color: var(--ink-soft); }
+  .sub { font-size: 13px; color: var(--ink-soft); margin-top: 5px; }
+  .status { font-size: 13px; color: var(--warn); margin-top: 4px; min-height: 17px; max-width: 22ch; }
+
+  .pad {
+    position: fixed; touch-action: none; cursor: pointer;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 22px);
+    background: var(--glass); border: 1px solid var(--edge); border-radius: 999px;
+    -webkit-backdrop-filter: blur(14px) saturate(140%); backdrop-filter: blur(14px) saturate(140%);
+  }
+  .pad:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .knob { position: absolute; width: 44px; height: 44px; border-radius: 50%; background: rgba(245, 248, 249, 0.92); box-shadow: 0 2px 10px rgba(0, 0, 0, 0.35); }
+  .label { position: absolute; left: 0; right: 0; text-align: center; font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-soft); }
+  .helm { left: calc(env(safe-area-inset-left, 0px) + 20px); width: 176px; height: 62px; }
+  .helm .knob { top: 8px; left: 65px; }
+  .helm .label { top: -22px; }
+  .sheet { right: calc(env(safe-area-inset-right, 0px) + 20px); width: 62px; height: 176px; }
+  .sheet .knob { left: 8px; top: 8px; }
+  .sheet .label { top: -22px; }
+  .sheet .end { position: absolute; left: 0; right: 0; text-align: center; font-size: 10px; color: var(--ink-soft); pointer-events: none; }
+  .sheet .end.top { top: 4px; }
+  .sheet .end.bottom { bottom: 4px; }
+  .keys {
+    position: fixed; left: 50%; transform: translateX(-50%); margin: 0; text-align: center;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 26px); font-size: 12px; color: var(--ink-soft);
+    text-shadow: 0 1px 10px rgba(0, 10, 20, 0.7); pointer-events: none; max-width: 40vw;
+  }
+  @media (pointer: coarse) { .keys { display: none; } }
+  .fallback { position: fixed; inset: 0; display: none; place-items: center; padding: 24px; text-align: center; }
+  .error {
+    position: fixed; z-index: 10; left: 12px; right: 12px; top: calc(env(safe-area-inset-top, 0px) + 120px);
+    padding: 12px 14px; border-radius: 10px; background: rgba(90, 10, 10, 0.88); color: #fff;
+    font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; word-break: break-word;
+  }
+  .error[hidden] { display: none; }
+</style>
+</head>
+<body>
+<canvas id="scene" tabindex="0" aria-label="Sailing yacht on an Arctic sea. Steer with A and D, trim the sheet with W and S, drag to look around."></canvas>
+
+<div class="hud">
+  <svg class="dial" viewBox="-50 -50 100 100" aria-hidden="true">
+    <circle r="45" fill="rgba(9,20,28,0.42)" stroke="rgba(255,255,255,0.22)" stroke-width="1.5"/>
+    <g id="twMark"><path d="M0 -47 L-5 -38 L5 -38 Z" fill="rgba(245,248,249,0.55)"/></g>
+    <path d="M0 -20 C 6 -10, 7 8, 5 17 L -5 17 C -7 8, -6 -10, 0 -20 Z" fill="rgba(245,248,249,0.88)"/>
+    <g id="boomMark"><line x1="0" y1="0" x2="0" y2="21" stroke="#cfd8e3" stroke-width="2.5" stroke-linecap="round"/></g>
+    <g id="awMark"><line x1="0" y1="-44" x2="0" y2="-27" stroke="#8fd3ff" stroke-width="3" stroke-linecap="round"/><path d="M0 -22 L-5 -30 L5 -30 Z" fill="#8fd3ff"/></g>
+  </svg>
+  <div class="readout">
+    <div class="spd"><span id="spd">0.0</span> <small>kn</small></div>
+    <div class="sub" id="hdg">Heading 000°</div>
+    <div class="status" id="status"></div>
+  </div>
+</div>
+
+<div class="pad helm" id="helm" tabindex="0" role="slider" aria-label="Helm" aria-valuemin="-1" aria-valuemax="1" aria-valuenow="0">
+  <span class="label">Helm</span><div class="knob" id="helmKnob"></div>
+</div>
+<div class="pad sheet" id="sheet" tabindex="0" role="slider" aria-label="Main sheet, top is trimmed in" aria-valuemin="0" aria-valuemax="1" aria-valuenow="0.55">
+  <span class="label">Sheet</span><span class="end top">in</span><span class="end bottom">out</span><div class="knob" id="sheetKnob"></div>
+</div>
+<p class="keys">A and D steer, W and S trim the sheet, drag to look around</p>
+
+<div class="fallback" id="fallback"><p>This scene needs WebGL. Try a recent version of Chrome, Safari, Firefox or Edge.</p></div>
+
+<div class="error" id="error" role="alert" hidden></div>
+<script>
+  // Show the first error on screen, which helps on phones without a developer console
+  (() => {
+    const show = (msg) => {
+      const el = document.getElementById('error');
+      if (!el || !el.hidden) return;
+      el.hidden = false;
+      el.textContent = 'Something went wrong:\n' + String(msg).slice(0, 600);
+    };
+    window.addEventListener('error', e => show(e.message || e.error));
+    window.addEventListener('unhandledrejection', e => show(e.reason));
+    const consoleError = console.error.bind(console);
+    console.error = (...args) => { consoleError(...args); show(args.map(String).join(' ')); };   // three.js shader errors
+  })();
+</script>
+<script type="importmap">
+  { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.module.js" } }
+</script>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>

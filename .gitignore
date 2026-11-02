@@ -1,0 +1,4 @@
+dist/
+__pycache__/
+*.exr
+.DS_Store
