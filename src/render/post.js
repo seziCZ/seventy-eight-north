@@ -118,14 +118,16 @@ export function createRenderPipeline({ renderer, scene, camera, particleScene, e
       gl_FragColor = vec4(c / max(l, 1e-4) * min(m, 8.0), 1.0);
     }`, { tInput: { value: null }, uTexel: vec2(), uHorizon: { value: 0.5 } });
   const raysBlurMat = fullscreen(/* glsl */ `
-    uniform sampler2D tInput; uniform vec2 uSunUV; varying vec2 vUv;
+    uniform sampler2D tInput; uniform vec2 uSunUV; uniform float uAspect; varying vec2 vUv;
     void main(){
-      vec2 delta = (vUv - uSunUV) * 0.9 / 40.0;
+      vec2 toSun = uSunUV - vUv;
+      vec2 delta = -toSun * 0.7 / 40.0;
       vec2 uv = vUv - delta * 0.5;
       vec3 acc = vec3(0.0); float w = 1.0;
-      for (int i = 0; i < 40; i++) { acc += texture2D(tInput, uv).rgb * w; w *= 0.975; uv -= delta; }
-      gl_FragColor = vec4(acc / 40.0, 1.0);
-    }`, { tInput: { value: null }, uSunUV: vec2() });
+      for (int i = 0; i < 40; i++) { acc += texture2D(tInput, uv).rgb * w; w *= 0.962; uv -= delta; }
+      float d = length(toSun * vec2(uAspect, 1.0));
+      gl_FragColor = vec4(acc / 40.0 * exp(-1.3 * d), 1.0);   // fade with distance from the sun
+    }`, { tInput: { value: null }, uSunUV: vec2(), uAspect: { value: 1 } });
 
   // Temporal anti-aliasing. History is reprojected assuming each pixel shows either the sea plane or the
   // far sky (no motion vectors), then clamped to the current 3x3 neighbourhood (in YCoCg, on tone-compressed
@@ -161,7 +163,7 @@ export function createRenderPipeline({ renderer, scene, camera, particleScene, e
     }`, { tCur: { value: null }, tHist: { value: null }, uTexel: vec2(), uBlend: { value: 0 },
           uInvVP: { value: new THREE.Matrix4() }, uPrevVP: { value: new THREE.Matrix4() }, uCamPos: { value: new THREE.Vector3() } });
 
-  // Composite and grade: cool shadows, desaturated, gentle S-curve, vignette
+  // Composite and grade: nearly colourless, steel-blue shadows, neutral highlights, firm S-curve, soft vignette
   const compositeMat = fullscreen(/* glsl */ `
     uniform sampler2D tScene; uniform sampler2D tBloom; uniform sampler2D tRays; uniform sampler2D tParticles;
     uniform float uRays; uniform float uAspect; uniform float uTime;
@@ -180,11 +182,12 @@ export function createRenderPipeline({ renderer, scene, camera, particleScene, e
       c = c * (1.0 - pt.a) + pt.rgb;
       c = aces(c);
       float l = dot(c, vec3(0.2126, 0.7152, 0.0722));
-      c *= mix(vec3(0.95, 1.0, 1.06), vec3(1.0, 1.0, 1.02), smoothstep(0.02, 0.75, l));
-      c = clamp(mix(vec3(l), c, 0.62), 0.0, 1.0);
-      c = mix(c, c * c * (3.0 - 2.0 * c), 0.12);
+      c = mix(vec3(l), c, 0.22);
+      c *= mix(vec3(0.88, 0.96, 1.10), vec3(0.99, 1.0, 1.01), smoothstep(0.0, 0.55, l));
+      c = clamp((c - 0.002) / 0.998, 0.0, 1.0);
+      c = mix(c, c * c * (3.0 - 2.0 * c), 0.2);
       vec2 q = (vUv - 0.5) * vec2(uAspect, 1.0);
-      c *= mix(0.55, 1.0, 1.0 - smoothstep(0.25, 1.1, length(q)));
+      c *= mix(0.72, 1.0, 1.0 - smoothstep(0.35, 1.15, length(q)));
       c = toSRGB(clamp(c, 0.0, 1.0));
       c += (fract(sin(dot(gl_FragCoord.xy + fract(uTime) * 61.0, vec2(12.9898, 78.233))) * 43758.5453) - 0.5) / 255.0;
       gl_FragColor = vec4(c, 1.0);
@@ -210,6 +213,7 @@ export function createRenderPipeline({ renderer, scene, camera, particleScene, e
     historyA.setSize(w, h); historyB.setSize(w, h); particlesRT.setSize(w, h);
     historyValid = false;
     compositeMat.uniforms.uAspect.value = w / h;
+    raysBlurMat.uniforms.uAspect.value = w / h;
   }
   resize();
 
@@ -242,7 +246,7 @@ export function createRenderPipeline({ renderer, scene, camera, particleScene, e
     horizonNdc.project(camera);
     raysMaskMat.uniforms.uHorizon.value = horizonNdc.y * 0.5 + 0.5;
     const edge = Math.max(Math.abs(sunNdc.x), Math.abs(sunNdc.y));
-    compositeMat.uniforms.uRays.value = camFwd.dot(SUN) > 0 ? 0.2 * (1 - smooth(0.9, 1.6, edge)) : 0;
+    compositeMat.uniforms.uRays.value = camFwd.dot(SUN) > 0 ? 0.7 * (1 - smooth(0.9, 1.6, edge)) : 0;
 
     // TAA: unjittered matrices for reprojection, then this frame's Halton sub-pixel offset
     viewProj.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);

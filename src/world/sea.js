@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { SKY_GLSL } from '../render/sky.js';
+import { SKY_GLSL, HAZE_GLSL } from '../render/sky.js';
 import { WAVES_GLSL } from './waves.js';
 import { clamp } from '../core/util.js';
 
@@ -11,8 +11,8 @@ const MAX_BERGS = 9;       // icebergs that tint the water around them
 
 /**
  * The sea: a 4 km grid displaced by the swell, shaded with wind chop from the ocean slope map,
- * sky and mirror reflections, cloud shadows, sun glitter, the yacht's foam and wake, and a teal glow
- * around submerged ice.
+ * sky and mirror reflections, cloud shadows, sun glitter, the yacht's foam and wake, a teal glow
+ * around submerged ice, and the shared haze.
  */
 export function createSea(shared) {
   const uniforms = {
@@ -45,7 +45,7 @@ export function createSea(shared) {
         vWorld = wp.xyz;
         gl_Position = projectionMatrix * viewMatrix * wp;
       }`,
-    fragmentShader: SKY_GLSL + /* glsl */ `
+    fragmentShader: SKY_GLSL + HAZE_GLSL + /* glsl */ `
       uniform sampler2D tReflect; uniform mat4 uTexMat; uniform sampler2D tNoise;
       uniform vec2 uBoatPos; uniform vec2 uBoatDir; uniform vec4 uBergs[${MAX_BERGS}];
       uniform float uBoatSpeed; uniform vec4 uTrail[${TRAIL_POINTS}];
@@ -85,19 +85,21 @@ export function createSea(shared) {
           }
         }
 
-        vec2 sl = (s1 * 0.6 + s2 * 0.4 * mid + s3 * 0.3 * near) * 0.14 * (0.35 + 0.65 * mid) * mix(0.75, 1.15, gust);
+        vec2 sl = (s1 * 0.6 + s2 * 0.3 * mid + s3 * 0.12 * near) * 0.11 * (0.35 + 0.65 * mid) * mix(0.75, 1.15, gust);
         sl *= 1.0 - 0.55 * slick;
         n = normalize(n + vec3(-sl.x, 0.0, -sl.y));
 
         // --- Reflection: Fresnel blend of the dark water body with the sky (slightly blurred so the chop
-        //     reads as wavelets, brightness soft-limited) and the mirror image of the yacht and ice
+        //     reads as a sheen, brightness soft-limited) and the mirror image of the yacht and ice. Fresnel uses
+        //     a smoothed normal, so the chop bends the reflection without making its strength flicker
         vec3 v = normalize(cameraPosition - vWorld);
         vec3 r = reflect(-v, n); r.y = abs(r.y);
-        float fres = 0.02 + 0.98 * pow(1.0 - max(dot(n, v), 0.0), 5.0);
+        vec3 nF = normalize(mix(normalize(vNormal), n, 0.35));
+        float fres = 0.02 + 0.98 * pow(1.0 - max(dot(nF, v), 0.0), 5.0);
         vec3 ta = normalize(cross(r, vec3(0.0, 1.0, 0.0)) + 1e-4);
         vec3 tb = cross(r, ta);
-        vec3 rs = (skyBase(r) * 2.0 + skyBase(normalize(r + ta * 0.035)) + skyBase(normalize(r - ta * 0.035))
-                 + skyBase(normalize(r + tb * 0.035)) + skyBase(normalize(r - tb * 0.035))) / 6.0;
+        vec3 rs = (skyBase(r) * 2.0 + skyBase(normalize(r + ta * 0.07)) + skyBase(normalize(r - ta * 0.07))
+                 + skyBase(normalize(r + tb * 0.07)) + skyBase(normalize(r - tb * 0.07))) / 6.0;
         rs = horizonDetail(r, rs);
         rs *= 1.0 / (1.0 + 0.45 * max(dot(rs, vec3(0.2126, 0.7152, 0.0722)) - 0.5, 0.0));
         rs += sunDisk(r);
@@ -118,10 +120,12 @@ export function createSea(shared) {
                   + vec3(0.004, 0.03, 0.034) * min(ice, 1.0);
         vec3 col = mix(deep, refl, fres);
 
-        // --- Cloud shadows on the surface; the sun glitters only where light breaks through
+        // --- Cloud shadows on the surface; the sun glitters only where light breaks through,
+        //     with tight sparkles inside a slightly wider path
         col *= mix(1.0, mix(0.72, 1.06, lit), 1.0 - smoothstep(600.0, 1800.0, dist));
         float glitter = mix(1.0, smoothstep(0.45, 0.8, texture2D(tNoise, q * 0.9 + uTime * vec2(0.21, -0.17)).b), near * 0.5);
-        col += vec3(1.0, 0.97, 0.92) * pow(max(dot(r, uSun), 0.0), 1500.0) * glitter * 5.0 * mix(0.15, 1.0, lit);
+        col += vec3(1.0, 0.97, 0.92) * (pow(max(dot(r, uSun), 0.0), 1500.0) * 5.0 + pow(max(dot(r, uSun), 0.0), 320.0) * 0.9)
+             * glitter * mix(0.15, 1.0, lit);
 
         // --- Foam in the yacht's frame: hull line, wake, stern wave arms, bow cushion and bow wave
         vec2 lp = q - uBoatPos;
@@ -143,9 +147,9 @@ export function createSea(shared) {
         foam *= smoothstep(0.35, 0.75, texture2D(tNoise, q * 0.22 + uTime * vec2(0.01, 0.015)).b + texture2D(tNoise, q * 0.9 - uTime * 0.03).b * 0.5 - 0.25);
         col = mix(col, vec3(0.34, 0.35, 0.36), clamp(foam, 0.0, 1.0) * 0.85);
 
-        // --- Fade into the horizon haze
+        // --- Shared haze, forced to full strength at the edge of the mesh
         vec3 hd = normalize(vec3(vWorld.x - cameraPosition.x + 0.0001, 0.0, vWorld.z - cameraPosition.z));
-        col = mix(col, skyHorizon(hd), smoothstep(700.0, 2000.0, dist));
+        col = mix(col, hazeColor(tHorizon, hd), max(hazeAmount(dist, 0.0), smoothstep(1400.0, 2000.0, dist)));
         gl_FragColor = vec4(col, 1.0);
       }`
   });

@@ -87,6 +87,49 @@ export const SKY_GLSL = NOISE_GLSL + /* glsl */ `
 `;
 
 /**
+ * Haze, shared by the sea shader and the built-in materials (ice, island, yacht). Its colour is the sky
+ * at the horizon in the view direction (the baked row of tHorizon), lifted a little so the horizon reads
+ * as a pale line. It thins with height, so berg tops stay a little clearer than their waterlines.
+ */
+export const HAZE_DENSITY = 0.0024;   // per metre at sea level
+export const HAZE_GLSL = /* glsl */ `
+  vec3 hazeColor(sampler2D horizon, vec3 dir){
+    return texture2D(horizon, vec2(atan(dir.z, dir.x) * 0.15915494 + 0.5, 2.5 / 3.0)).rgb * 1.3 + vec3(0.003, 0.004, 0.005);
+  }
+  float hazeAmount(float dist, float height){
+    return 1.0 - exp(-dist * ${HAZE_DENSITY.toFixed(5)} * mix(0.45, 1.0, exp(-max(height, 0.0) / 30.0)));
+  }
+`;
+
+/**
+ * Replaces the standard fog with the haze on every built-in material under `root`. Call before the first
+ * render. scene.fog must still be set: it switches the fog shader chunks on, but its colour and range are unused.
+ */
+export function addHaze(root, tHorizon) {
+  const patch = shader => {
+    shader.uniforms.tHazeHorizon = tHorizon;
+    shader.vertexShader = shader.vertexShader
+      .replace('#include <fog_pars_vertex>', `#include <fog_pars_vertex>
+        varying vec3 vHazeDir;`)
+      .replace('#include <fog_vertex>', `#include <fog_vertex>
+        vHazeDir = mvPosition.xyz * mat3(viewMatrix);   // camera-to-vertex offset in world space`);
+    shader.fragmentShader = shader.fragmentShader
+      .replace('#include <fog_pars_fragment>', `#include <fog_pars_fragment>
+        uniform sampler2D tHazeHorizon; varying vec3 vHazeDir;
+        ${HAZE_GLSL}`)
+      .replace('#include <fog_fragment>', `
+        float hDist = length(vHazeDir);
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, hazeColor(tHazeHorizon, vHazeDir / max(hDist, 1e-3)),
+                               hazeAmount(hDist, cameraPosition.y + vHazeDir.y));`);
+  };
+  root.traverse(o => {
+    (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => {
+      if (m && !m.isShaderMaterial && m.fog) m.onBeforeCompile = patch;
+    });
+  });
+}
+
+/**
  * Sky dome material. `below` = 1 fades the lower hemisphere to dark water, which is what the
  * environment map needs; the visible dome uses 0 (the sea covers it anyway).
  */

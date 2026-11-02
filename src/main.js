@@ -3,7 +3,7 @@
 import * as THREE from 'three';
 import { createEngine } from './core/engine.js';
 import { loadTextures, createCloudSampler } from './render/assets.js';
-import { SUN, createSky, createSkyBaker } from './render/sky.js';
+import { SUN, createSky, createSkyBaker, addHaze } from './render/sky.js';
 import { createRenderPipeline, hdrTargetType } from './render/post.js';
 import { createResolutionScaler } from './render/resolution.js';
 import { createSea, createMist, createWakeTracker, SEA_CELL } from './world/sea.js';
@@ -88,11 +88,12 @@ function start() {
   sunLight.shadow.normalBias = 0.03;
   scene.add(sunLight, sunLight.target);
   scene.add(new THREE.HemisphereLight(new THREE.Color().setRGB(0.7, 0.75, 0.82), new THREE.Color().setRGB(0.1, 0.12, 0.14), 0.45));
-  scene.fog = new THREE.Fog(new THREE.Color().setRGB(0.2, 0.23, 0.27), 300, 3200);
+  scene.fog = new THREE.Fog(0x000000, 1, 2);   // only switches the fog chunks on; addHaze() replaces colour and range
 
   const ice = createIce(scene, shared, sea.uniforms);
   const yacht = createYacht({ sunView, pxUniform, sunUniform: shared.uSun });
   scene.add(yacht.group);
+  addHaze(scene, shared.tHorizon);   // ice, island and yacht fade into the same haze as the sea
 
   const cloudLitAt = createCloudSampler(textures.ocean);
   const updateWake = createWakeTracker(sea.uniforms);
