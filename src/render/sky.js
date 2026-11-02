@@ -124,7 +124,10 @@ export function addHaze(root, tHorizon) {
   };
   root.traverse(o => {
     (Array.isArray(o.material) ? o.material : [o.material]).forEach(m => {
-      if (m && !m.isShaderMaterial && m.fog) m.onBeforeCompile = patch;
+      if (!m || m.isShaderMaterial || !m.fog || m.userData.hazed) return;
+      m.userData.hazed = true;   // materials are shared between meshes: patch each one once
+      const own = m.onBeforeCompile;   // keep a material's own patch (the ice has one)
+      m.onBeforeCompile = (shader, renderer) => { own.call(m, shader, renderer); patch(shader); };
     });
   });
 }
